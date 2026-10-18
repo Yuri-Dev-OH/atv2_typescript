@@ -1,0 +1,4 @@
+* text=auto
+# Executados dentro de contêineres Linux: CRLF quebra o interpretador (set: Illegal option -).
+*.sh text eol=lf
+Dockerfile* text eol=lf
