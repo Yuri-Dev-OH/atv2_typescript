@@ -54,6 +54,21 @@ describe.skipIf(!url)('Integração com PostgreSQL real', () => {
     expect((await banco.query('SELECT * FROM recomendacao WHERE projeto_id=$1', [projetoId])).length).toBe(2);
     expect((await banco.query('SELECT * FROM convite WHERE projeto_id=$1', [projetoId])).every((c: { status: string }) => c.status === 'cancelado')).toBe(true);
   }, 30000);
+  it('persiste cada tipo em JSONB e o reconstrói com a fábrica correta', async () => {
+    for (const [tipoCaptacao, trecho] of [['documentario', 'documentário'], ['animacao', 'render estimado'], ['publicitario', 'peça publicitária']] as const) {
+      const r = await contexto.app.inject({ method: 'POST', url: '/projetos', payload: { ...projetoExemplo(), duracao: 1, tipoCaptacao } });
+      expect(r.statusCode, r.body).toBe(201);
+      const projetoId = r.json().projeto.id;
+      await contexto.eventos.processar();
+      expect((await repo.obterProjeto(projetoId))!.projeto.tipoCaptacao).toBe(tipoCaptacao);
+      expect((await repo.notificacoes('produtor-demo')).some(n => n.mensagem.includes(projetoId) && n.mensagem.includes(trecho))).toBe(true);
+      const relatorio = (await contexto.app.inject(`/projetos/${projetoId}/relatorio`)).json();
+      expect(relatorio.tipo).toBe(tipoCaptacao);
+      // A reavaliação lê o estado do banco e volta a passar pelo validador do tipo.
+      const reavaliado = await contexto.app.inject({ method: 'POST', url: `/projetos/${projetoId}/reavaliar`, payload: { papeis: projetoExemplo().papeis.slice(0, 1) } });
+      expect(reavaliado.statusCode).toBe(422);
+    }
+  }, 30000);
   it('transação reverte projeto quando não consegue gravar o evento', async () => {
     const estado = await contexto.sistema.criar(projetoExemplo());
     await contexto.eventos.processar();
