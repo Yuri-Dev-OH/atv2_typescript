@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: cinebridge
+      POSTGRES_PASSWORD: cinebridge
+      POSTGRES_DB: cinebridge_test
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebridge -d cinebridge_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  validacao:
+    build:
+      context: .
+      dockerfile: Dockerfile.validation
+    environment:
+      DATABASE_URL: postgres://cinebridge:cinebridge@postgres:5432/cinebridge_test
+      TEST_DATABASE_URL: postgres://cinebridge:cinebridge@postgres:5432/cinebridge_test
+    depends_on:
+      postgres:
+        condition: service_healthy

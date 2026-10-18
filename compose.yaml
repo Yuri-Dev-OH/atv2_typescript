@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: cinebridge
+      POSTGRES_PASSWORD: cinebridge
+      POSTGRES_DB: cinebridge
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/01-test.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebridge -d cinebridge"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  catalogo-db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: cinebridge
+      POSTGRES_PASSWORD: cinebridge
+      POSTGRES_DB: cinebridge_catalogo
+    volumes:
+      - catalogo_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebridge -d cinebridge_catalogo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  catalogo:
+    build: .
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3004
+      DATABASE_URL: postgres://cinebridge:cinebridge@catalogo-db:5432/cinebridge_catalogo
+    ports:
+      - "127.0.0.1:3004:3004"
+    depends_on:
+      catalogo-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3004/saude').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  postgres_data:
+  catalogo_data:

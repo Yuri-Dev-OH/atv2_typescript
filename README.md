@@ -1,0 +1,194 @@
+# Cinebridge
+
+API para recomendar e formar equipes audiovisuais. Node.js, TypeScript estrito, Fastify, PostgreSQL e TypeORM. Não há interface gráfica.
+
+## Executar
+
+Com o Docker Desktop aberto, execute no PowerShell, nesta pasta:
+
+```powershell
+npm install
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+docker compose up -d --build --wait
+npm run db:migrate
+npm run db:seed
+npm run build
+npm run dev
+```
+
+O banco usa a porta **5433** para evitar conflito com instalações locais de PostgreSQL. A API fica em **http://127.0.0.1:3000**. O cadastro inicial tem 18 profissionais. Rodar o seed novamente não duplica os exemplos. Não sobrescreva seu `.env` se já tiver feito configurações próprias.
+
+O Compose também inicia o catálogo na porta 3004, com banco próprio. Em instalações anteriores, acrescente `CATALOGO_URL=http://127.0.0.1:3004` ao `.env` depois de subir os novos serviços e execute o seed novamente. Os projetos existentes continuam preservados; o catálogo separado recebe os exemplos. Sem essa variável, o modo local usa a tabela de profissionais no mesmo banco da API.
+
+Em outro terminal:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/saude
+npm run demo
+```
+
+A demonstração cria um projeto, recomenda seis profissionais, troca para a estratégia de orçamento, substitui o editor, envia convites, confirma todos os integrantes e imprime o relatório. Ela exige o seed e a API em execução. Cada execução cria um novo projeto.
+
+Para executar a versão compilada, pare o modo de desenvolvimento com Ctrl+C e use `npm start`. No Ubuntu, substitua a linha de cópia do `.env` por `test -f .env || cp .env.example .env`. É necessário Node.js 24 ou superior e Docker com Compose.
+
+## Testes
+
+```powershell
+npm test
+npm run test:coverage
+npm run test:postgres
+npm run evaluate
+npm run test:load
+npm run demo:integracoes
+```
+
+- `npm test`: testes dos padrões, regras de negócio e API. Com `TEST_DATABASE_URL` no `.env`, também executa os testes de PostgreSQL.
+- `npm run test:coverage`: relatório de cobertura no terminal e em `coverage/index.html`. Exige mais de 80% em linhas, funções, instruções e ramificações. Para medir a persistência também, o banco de teste deve estar disponível.
+- `npm run test:postgres`: somente os testes de integração com PostgreSQL real. Sem `TEST_DATABASE_URL`, essa suíte é pulada; isso não valida a persistência.
+- `npm run evaluate`: precisão@1 para cada estratégia, em um conjunto sintético com avaliações separadas das usadas no cálculo. Serve para demonstrar a medição; não representa a qualidade com usuários reais.
+- `npm run test:load`: compila o código, cadastra 10 mil profissionais no banco de teste e envia 100 requisições HTTP simultâneas a um servidor temporário. Exibe mediana, p95 e máximo e falha se alguma resposta ultrapassar dois segundos ou for inválida. O catálogo é aquecido antes da medição. Não é necessário iniciar `npm run dev` para esse teste.
+
+Os testes de PostgreSQL e de carga **limpam apenas o banco indicado em `TEST_DATABASE_URL`**, cujo nome deve terminar em `_test`. Não execute essas duas suítes ao mesmo tempo. O Compose cria `cinebridge_test` na primeira inicialização do volume. Se você estiver reutilizando um volume anterior que não tem esse banco:
+
+```powershell
+docker compose exec postgres createdb -U cinebridge cinebridge_test
+```
+
+Para repetir a compilação, cobertura, carga e integração HTTP no **Ubuntu 24.04**, em ambiente isolado dos bancos de desenvolvimento:
+
+```powershell
+docker compose -p cinebridge-validacao -f compose.validation.yaml up --build --abort-on-container-exit --exit-code-from validacao
+```
+
+A imagem imprime a versão do sistema e do Node. A validação só está concluída quando o contêiner `validacao` termina com código 0. O banco desse ambiente é temporário. A preparação do Dockerfile não equivale a comprovar a execução; consulte `docs/verificacao.md` para o estado das verificações.
+
+## API
+
+| Método | Rota | Ação |
+|---|---|---|
+| GET | `/saude` | Testa conexão com o banco |
+| POST | `/profissionais` | Cadastra perfil, competências, histórico e avaliações |
+| GET | `/profissionais` | Lista profissionais |
+| POST | `/projetos` | Cria projeto e recomenda equipe |
+| GET | `/projetos/:id` | Consulta equipe, ranking e convites |
+| POST | `/projetos/:id/reavaliar` | Altera características e refaz a equipe |
+| POST | `/projetos/:id/membros/:papel` | Aceita, rejeita ou substitui um membro |
+| POST | `/projetos/:id/convites/:conviteId/responder` | Registra aceite ou recusa do profissional |
+| GET | `/projetos/:id/relatorio` | Relatório, compatibilidade e pendências |
+| GET | `/notificacoes?destinatarioId=...` | Notificações internas e e-mails |
+| GET | `/auditoria?projetoId=...` | Ações registradas |
+| GET | `/eventos` | Eventos e observadores que receberam cada um |
+| GET | `/integracoes` | Eventos destinados a projetos e financeiro |
+
+Os exemplos completos de dados estão em `scripts/fixtures.ts`. Para criar um projeto manualmente no PowerShell:
+
+```powershell
+$projeto = @{
+  produtorId = 'produtor-demo'
+  emailProdutor = 'produtor@example.com'
+  titulo = 'Meu curta'
+  genero = 'drama'
+  duracao = 20
+  orcamento = 2000
+  inicio = '2027-02-01'
+  prazo = '2027-03-01'
+  tipoCaptacao = 'ficcao'
+  localizacao = 'São Paulo'
+  estrategia = 'cosseno'
+  papeis = @(@{
+    papel = 'DIRETOR'
+    peso = 1
+    competencias = @(@{ nome = 'diretor'; nivel = 1 })
+  })
+} | ConvertTo-Json -Depth 10
+$resultado = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3000/projetos -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($projeto))
+$resultado.equipe
+$projetoId = $resultado.projeto.id
+```
+
+Aceitar o diretor e confirmar o convite:
+
+```powershell
+$resultado = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3000/projetos/$projetoId/membros/DIRETOR" -ContentType 'application/json' -Body '{"acao":"aceitar"}'
+$conviteId = ($resultado.convites | Where-Object status -eq 'pendente')[0].id
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3000/projetos/$projetoId/convites/$conviteId/responder" -ContentType 'application/json' -Body '{"aceitar":true}'
+Invoke-RestMethod "http://127.0.0.1:3000/projetos/$projetoId/relatorio"
+```
+
+Outros corpos de requisição:
+
+```json
+{ "acao": "rejeitar" }
+```
+
+```json
+{ "acao": "substituir", "profissionalId": "UUID-DO-NOVO-PROFISSIONAL" }
+```
+
+Sem `profissionalId`, a substituição escolhe automaticamente outro candidato. Para recusar um convite, envie `{"aceitar":false}`. Para reavaliar, envie, por exemplo, `{"estrategia":"orcamento","orcamento":4000}` à rota de reavaliação.
+
+Entradas inválidas retornam 400, regras de negócio retornam 422, recursos ausentes retornam 404 e alterações concorrentes do mesmo projeto retornam 409. Falhas de persistência retornam 503, sem fingir que o projeto foi salvo.
+
+## Organização e padrões
+
+```text
+src/
+  domain/          entidades, contratos e visitantes
+  recommendation/ estratégias e orquestrador
+  application/     casos de uso e cache do catálogo
+  events/          observadores e EventEmitter
+  infrastructure/  TypeORM, migração e repositórios
+  http/            rotas e validação JSON Schema
+tests/             testes unitários e de integração
+scripts/           migração, exemplos, avaliação e carga
+```
+
+| Padrão | Implementação | Demonstração |
+|---|---|---|
+| Strategy | `SimilaridadeCosseno`, `FiltragemColaborativa`, `RegrasOrcamento` | Troca de estratégia altera a equipe e o custo |
+| Template Method | `OrquestradorEquipe` e `OrquestradorPadrao` | Validar → normalizar → recomendar → pós-processar; método principal não gravável |
+| Observer | `EventosEmMemoria`, notificadores, auditoria e integração | Observadores independentes, entregas com repetição em caso de falha |
+| Visitor | `ValidadorConsistencia`, `CalculadorCompatibilidade`, `GeradorRelatorio` | Operações diferentes sobre projeto e profissional sem modificar seu estado |
+
+As dependências são fornecidas por construtor. O servidor usa PostgreSQL; o repositório em memória é usado exclusivamente nos testes. Competências, avaliações, convites e recomendações têm tabelas próprias. O projeto conserva em JSONB o estado completo da equipe, permitindo atualização atômica com controle de versão. O histórico de recomendações é preservado.
+
+## Regras adotadas
+
+- `faixaPreco: { minimo, maximo }` registra a faixa cobrada pelo profissional. `preco` é o valor proposto para o projeto e deve pertencer à faixa. Cadastros antigos sem faixa são tratados como preço fixo (mínimo = máximo = preço). A migração preserva os dados existentes. As somas do orçamento usam centavos inteiros. Duração da obra é informada em minutos.
+- Datas usam `AAAA-MM-DD`. O profissional precisa cobrir todo o intervalo entre início e prazo. A localização deve coincidir, salvo quando ele aceita trabalho remoto.
+- Competências têm níveis entre 0 e 1; avaliações, notas entre 1 e 5. Há uma avaliação por produtor em cada perfil. Um profissional ocupa no máximo um papel na equipe.
+- O peso do papel influencia a escolha da composição. `pesoTecnico`, `pesoHistorico` e `notaMinima` parametrizam o algoritmo. Os padrões são 0,7, 0,3 e 0.
+- Similaridade de cosseno combina competências, avaliações e experiência no gênero. Filtragem colaborativa utiliza avaliações de produtores com histórico em comum e recorre à média quando não há dados suficientes. Regras de orçamento priorizam economia, considerando também qualidade.
+- A composição combina um matching de custo mínimo (até 64 estados para seis papéis) com uma busca de maior qualidade limitada a 64 alternativas por etapa. O matching encontra uma equipe completa quando há uma composição viável entre os candidatos elegíveis. A busca de qualidade não garante o máximo global de pontuação. Se não houver composição completa dentro das restrições, a resposta explicita os papéis faltantes.
+- A substituição ou recusa preserva os outros membros. O substituto exige novo aceite. A reavaliação completa cancela os convites anteriores e permite recalcular toda a equipe.
+- A equipe só fica `formada` depois que todos os membros forem aceitos pelo produtor e confirmarem seus convites.
+- O catálogo fica em cache por cinco segundos. Em falha de leitura, pode usar uma cópia de até cinco minutos; sem ela, retorna equipe parcial. A resposta indica o modo degradado. Uma substituição manual não é confirmada com catálogo degradado.
+- A API mantém até 16 operações de gravação ativas; as demais aguardam em ordem de chegada. Isso permite receber 100 solicitações simultâneas sem disputar todas as 20 conexões do banco com os observadores. O teste de carga mede também essa espera, mantendo o limite de dois segundos.
+
+## Notificações e eventos
+
+Os eventos são persistidos na mesma transação do projeto e entregues via `EventEmitter`. O servidor verifica a fila a cada segundo. Falhas de e-mail não impedem notificações internas ou auditoria. As entregas locais usam identificadores únicos para evitar duplicação.
+
+Ao aguardar `eventos.processar()`, o chamador espera a entrega dos eventos que entraram durante o processamento. Uma entrega que falhar fica para o próximo ciclo, evitando repetição infinita quando uma dependência está indisponível.
+
+O produtor e todos os profissionais apresentados na equipe ou nas alternativas do ranking recebem a notificação da recomendação. O aceite ou a recusa de um convite notifica o produtor.
+
+`ObservadorComposicao` recebe `CONVITE_ACEITO` ou `CONVITE_RECUSADO` e aplica a confirmação ou recalcula o papel recusado, preservando os demais. A resposta HTTP aguarda o ciclo de eventos. A marca `respostaProcessada` e o controle de versão impedem aplicar duas vezes a mesma resposta. Uma falha mantém o evento pendente para nova tentativa.
+
+As consultas de eventos, auditoria, notificações e integrações retornam até 500 registros por chamada. Os registros permanecem no banco; esse limite não descarta histórico.
+
+Sem SMTP configurado, os e-mails ficam registrados na rota `/notificacoes` com status `registrada`; nenhum e-mail é enviado de verdade. Para envio real, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` e, se necessário, `SMTP_USER`, `SMTP_PASSWORD` e `SMTP_SECURE=true` no `.env`.
+
+Após formar a equipe, `PublicadorHttp` envia o evento aos endpoints configurados em `PROJETOS_EVENTOS_URL` e `FINANCEIRO_EVENTOS_URL` (configure ambos). As entregas usam `idempotency-key` e repetem em caso de falha; os consumidores devem deduplicar pelo ID do evento. Sem esses endpoints, `/integracoes` registra os destinos, sem envio externo.
+
+`npm run demo:integracoes` abre dois consumidores HTTP temporários, forma uma equipe no banco configurado e verifica os estados `em_producao` e `aguardando_pagamento`. Não exige a API principal aberta. São consumidores de demonstração em memória, sem pagamentos reais; o transporte HTTP é real e testado. Cada execução cria um projeto. O diagrama atualizado está em `docs/diagrama.puml`; o diagrama original foi preservado.
+
+Com `CATALOGO_URL`, uma queda do catálogo ou de seu banco não interrompe o banco dos projetos. Os testes desligam o servidor HTTP do catálogo e verificam a persistência de equipe parcial no PostgreSQL. Se o próprio banco de projetos cair, a API retorna erro de persistência. O cadastro remoto e a auditoria local não constituem uma transação distribuída.
+
+A aplicação é local e não implementa autenticação, que não foi solicitada no exercício. As rotas de convites representam a ação do profissional. O processamento da fila pressupõe uma instância do serviço. SMTP tem entrega pelo menos uma vez: uma interrupção depois do envio e antes da confirmação no banco pode repetir um e-mail.
+
+## Referências técnicas
+
+- [Validação no Fastify](https://fastify.dev/docs/latest/Reference/Validation-and-Serialization/)
+- [DataSource do TypeORM](https://typeorm.io/docs/data-source/data-source/)
+- [Migrações do TypeORM](https://typeorm.io/docs/migrations/setup/)

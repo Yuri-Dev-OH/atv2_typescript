@@ -1,0 +1,37 @@
+{
+  "name": "cinebridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=.env dist/src/server.js",
+    "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
+    "db:seed": "tsx --env-file=.env scripts/seed.ts",
+    "test": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --configLoader native",
+    "test:coverage": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --configLoader native --coverage",
+    "test:postgres": "node --env-file=.env node_modules/vitest/vitest.mjs run --configLoader native tests/postgres.test.ts",
+    "pretest:load": "npm run build",
+    "test:load": "node --env-file=.env dist/scripts/load.js",
+    "demo": "tsx scripts/demo.ts",
+    "predemo:integracoes": "npm run build",
+    "demo:integracoes": "node --env-file-if-exists=.env dist/scripts/integrations-demo.js",
+    "evaluate": "tsx scripts/evaluate.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.6.0",
+    "nodemailer": "10.0.11",
+    "pg": "^8.16.0",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3",
+    "vitest": "4.1.11"
+  }
+}

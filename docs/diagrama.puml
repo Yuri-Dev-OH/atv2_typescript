@@ -1,0 +1,73 @@
+@startuml
+title Cinebridge - implementação
+interface RepositorioProfissionais
+interface Repositorio
+interface ProcessadorEventos
+interface PublicadorIntegracao
+Repositorio --|> RepositorioProfissionais
+class SistemaRecomendacao
+class CatalogoProfissionais
+class CatalogoHttp
+class RepositorioPostgres
+class OrquestradorEquipe <<Template Method>>
+class OrquestradorPadrao
+interface EstrategiaRecomendacao <<Strategy>>
+class SimilaridadeCosseno
+class FiltragemColaborativa
+class RegrasOrcamento
+class EventosEmMemoria <<EventEmitter>>
+interface Observador
+class ObservadorComposicao
+class AuditoriaRecomendacao
+class NotificadorInterno
+class NotificadorEmail
+class IntegracaoEquipe
+class PublicadorHttp
+class Projeto
+class Profissional
+interface Visitante <<Visitor>>
+class ValidadorConsistencia
+class CalculadorCompatibilidade
+class GeradorRelatorio
+RepositorioPostgres ..|> Repositorio
+CatalogoHttp ..|> RepositorioProfissionais
+SistemaRecomendacao --> Repositorio
+SistemaRecomendacao --> ProcessadorEventos
+SistemaRecomendacao --> CatalogoProfissionais
+CatalogoProfissionais --> RepositorioProfissionais
+SistemaRecomendacao --> OrquestradorEquipe
+OrquestradorPadrao --|> OrquestradorEquipe
+OrquestradorEquipe --> EstrategiaRecomendacao
+SimilaridadeCosseno ..|> EstrategiaRecomendacao
+FiltragemColaborativa ..|> EstrategiaRecomendacao
+RegrasOrcamento ..|> EstrategiaRecomendacao
+EventosEmMemoria ..|> ProcessadorEventos
+EventosEmMemoria o--> Observador
+ObservadorComposicao ..|> Observador
+AuditoriaRecomendacao ..|> Observador
+NotificadorInterno ..|> Observador
+NotificadorEmail ..|> Observador
+IntegracaoEquipe ..|> Observador
+ObservadorComposicao --> SistemaRecomendacao : aplicarRespostaConvite
+IntegracaoEquipe --> PublicadorIntegracao
+PublicadorHttp ..|> PublicadorIntegracao
+Projeto --> Visitante : aceitar
+Profissional --> Visitante : aceitar
+ValidadorConsistencia ..|> Visitante
+CalculadorCompatibilidade ..|> Visitante
+GeradorRelatorio ..|> Visitante
+note right of Profissional
+preco: valor proposto
+faixaPreco: mínimo e máximo
+competências, avaliações,
+disponibilidade e histórico
+end note
+note bottom of CatalogoHttp
+HTTP para catálogo com PostgreSQL próprio.
+Falha: cache recente ou equipe parcial.
+end note
+note bottom of PublicadorHttp
+EQUIPE_FORMADA para projetos e financeiro.
+Repetição com chave de idempotência.
+end note
+@enduml
