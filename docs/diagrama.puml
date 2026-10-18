@@ -23,7 +23,6 @@ class NotificadorInterno
 class NotificadorEmail
 class IntegracaoEquipe
 class PublicadorHttp
-class Projeto
 class Profissional
 interface Visitante <<Visitor>>
 class ValidadorConsistencia
@@ -56,6 +55,68 @@ Profissional --> Visitante : aceitar
 ValidadorConsistencia ..|> Visitante
 CalculadorCompatibilidade ..|> Visitante
 GeradorRelatorio ..|> Visitante
+interface Prototipo<T> <<Prototype>> {
+  +clonar(): T
+}
+abstract class "Projeto<R>" as Projeto {
+  +tipo: TipoProjeto
+  +restricoes: R
+  +clonar(): Projeto<R>
+  +ajustar(ajustes, restricoes): this
+  +comEstado(estado, profissionais): Projeto<R>
+}
+class ProjetoFiccao
+class ProjetoDocumentario
+class ProjetoAnimacao
+class ProjetoPublicitario
+class RegistroPrototipos {
+  -prototipos: Map<TipoProjeto, Projeto>
+  +registrar(prototipo): this
+  +obter(tipo): Projeto
+  +criar(tipo, ajustes): Projeto
+  +hidratar(estado, profissionais): Projeto
+}
+Projeto ..|> Prototipo
+Profissional ..|> Prototipo
+ProjetoFiccao --|> Projeto
+ProjetoDocumentario --|> Projeto
+ProjetoAnimacao --|> Projeto
+ProjetoPublicitario --|> Projeto
+RegistroPrototipos "1" o--> "0..*" Projeto : clona
+SistemaRecomendacao --> RegistroPrototipos
+interface FabricaProjeto <<Abstract Factory>> {
+  +tipo: TipoProjeto
+  +criarProjeto(dados): Projeto
+  +criarValidador(): ValidadorProjeto
+  +criarRecomendador(estrategia): EstrategiaRecomendacao
+  +criarNotificador(): NotificadorProjeto
+  +criarRelatorio(): Visitante
+}
+class GeradorRelatorioAnimacao
+GeradorRelatorioAnimacao --|> GeradorRelatorio
+FabricaAnimacao ..> GeradorRelatorioAnimacao : cria
+abstract class FabricaBase
+class FabricaFiccao
+class FabricaDocumentario
+class FabricaAnimacao
+class FabricaPublicitario
+interface ValidadorProjeto
+interface NotificadorProjeto
+class RecomendadorPriorizado
+FabricaBase ..|> FabricaProjeto
+FabricaFiccao --|> FabricaBase
+FabricaDocumentario --|> FabricaBase
+FabricaAnimacao --|> FabricaBase
+FabricaPublicitario --|> FabricaBase
+FabricaBase --> Projeto : prototipo
+Projeto ..> FabricaProjeto : criarFabrica() <<Factory Method>>
+FabricaProjeto ..> ValidadorProjeto : cria
+FabricaProjeto ..> NotificadorProjeto : cria
+FabricaProjeto ..> EstrategiaRecomendacao : cria
+RecomendadorPriorizado ..|> EstrategiaRecomendacao
+RecomendadorPriorizado --> EstrategiaRecomendacao : base
+OrquestradorEquipe --> "1" FabricaProjeto
+SistemaRecomendacao ..> FabricaProjeto : seleciona pelo tipo
 note right of Profissional
 preco: valor proposto
 faixaPreco: mínimo e máximo

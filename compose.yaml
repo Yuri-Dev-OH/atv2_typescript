@@ -47,3 +47,4 @@ services:
 volumes:
   postgres_data:
   catalogo_data:
+#https://www.youtube.com/watch?v=dQw4w9WgXcQ

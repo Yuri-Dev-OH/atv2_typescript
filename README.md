@@ -149,6 +149,26 @@ scripts/           migração, exemplos, avaliação e carga
 | Template Method | `OrquestradorEquipe` e `OrquestradorPadrao` | Validar → normalizar → recomendar → pós-processar; método principal não gravável |
 | Observer | `EventosEmMemoria`, notificadores, auditoria e integração | Observadores independentes, entregas com repetição em caso de falha |
 | Visitor | `ValidadorConsistencia`, `CalculadorCompatibilidade`, `GeradorRelatorio` | Operações diferentes sobre projeto e profissional sem modificar seu estado |
+| Prototype | `Projeto` (abstrato), `ProjetoFiccao`, `ProjetoDocumentario`, `ProjetoAnimacao`, `ProjetoPublicitario`, `RegistroPrototipos` | `clonar()` devolve cópia profunda (papéis, competências, restrições e profissionais); novos projetos nascem do clone do modelo do tipo |
+| Factory Method | `Projeto.criarFabrica()` em cada subclasse; `criarValidador()` e `criarNotificador()` em cada fábrica | Cada tipo de projeto define a fábrica e os componentes que coopera com ele |
+| Abstract Factory | `FabricaProjeto`, `FabricaFiccao`, `FabricaDocumentario`, `FabricaAnimacao`, `FabricaPublicitario` | Trocar a fábrica troca projeto, validador, recomendador e notificador; `OrquestradorEquipe` recebe a fábrica no construtor e não tem condicionais por tipo |
+
+### Tipos de projeto (Prototype)
+
+`tipoCaptacao` aceita `ficcao`, `documentario`, `animacao` e `publicitario`. Cada tipo tem um protótipo em `RegistroPrototipos.padrao()` com papéis, estratégia, parâmetros e restrições próprias. Em `POST /projetos`, `papeis`, `estrategia` e `parametros` são opcionais: o que não for enviado vem do modelo do tipo (ficção mantém os padrões da atividade 1: cosseno, 0,7/0,3/0). As restrições são definidas apenas no servidor e retornadas em `GET /projetos/:id/relatorio`. O estado continua persistido como dados puros em JSONB; a subclasse é reconstruída pelo registro a partir de `tipoCaptacao`.
+
+### Fábricas por tipo (Factory Method e Abstract Factory)
+
+A cada solicitação, `SistemaRecomendacao.fabricaPara(tipo)` obtém o protótipo do tipo e chama seu Factory Method `criarFabrica()`. A fábrica cria o projeto (por clonagem), e o orquestrador usa o validador e o recomendador dela; o serviço usa o notificador e a rota de relatório usa o gerador de relatório da fábrica (em animação, com métricas de eficiência de renderização: horas estimadas, ocupação da janela e custo por minuto de obra). Adicionar um tipo (por exemplo, realidade virtual) exige uma subclasse de `Projeto`, uma fábrica e o registro do protótipo, sem alterar `OrquestradorEquipe`.
+
+| Tipo | Validador | Recomendador | Notificação |
+|---|---|---|---|
+| `ficcao` | exige diretor | estratégia pura da atividade 1 | formato da atividade 1 |
+| `documentario` | diretor, fotografia, som e edição; ao menos 14 dias de captação | prioriza captação em campo | título, local e termo de direito de imagem |
+| `animacao` | diretor, efeitos visuais e edição; horas de render cabem na janela | prioriza modelagem 3D | pipeline e horas estimadas de render |
+| `publicitario` | diretor, fotografia e edição; até 3 min e 30 dias | prioriza publicidade | prazo e aprovação do cliente |
+
+As violações retornam 422 na criação e aparecem em `pendencias` no relatório. Testes: `tests/prototype.test.ts` e `tests/fabricas.test.ts`.
 
 As dependências são fornecidas por construtor. O servidor usa PostgreSQL; o repositório em memória é usado exclusivamente nos testes. Competências, avaliações, convites e recomendações têm tabelas próprias. O projeto conserva em JSONB o estado completo da equipe, permitindo atualização atômica com controle de versão. O histórico de recomendações é preservado.
 

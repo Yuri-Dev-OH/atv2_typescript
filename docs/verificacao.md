@@ -25,3 +25,22 @@ A migração do banco de desenvolvimento foi aplicada preservando os projetos. N
 O orquestrador retorna diretamente os melhores candidatos independentes quando não há conflito de profissionais nem excesso de orçamento. Nesse caso, a busca combinatória não pode melhorar a pontuação. Nos outros casos, a busca foi preservada. Também foram removidos cálculos repetidos de normalização e uma passagem desnecessária pelas avaliações. Com a mesma carga local no Windows, houve 100 sucessos e máximo de 1364,266 ms.
 
 Os consumidores externos são demonstrações, e SMTP depende de configuração para envio real. Não se implementaram interface gráfica, menu CLI nem CRUD genérico adicional: a interação requerida acontece pela API REST.
+
+## Atividade 2 (Prototype, Factory Method e Abstract Factory)
+
+Verificado em 18/10/2026 no Windows 11 (Node 24.21.0, Docker Desktop 29.7.2, PostgreSQL 18) e em contêiner Ubuntu 24.04.5 LTS (Node 24.22.0).
+
+| Requisito do enunciado | Implementação e evidência |
+|---|---|
+| Prototype com `clonar()` profundo em cada subclasse de `Projeto` | `ProjetoFiccao`, `ProjetoDocumentario`, `ProjetoAnimacao`, `ProjetoPublicitario` e `RegistroPrototipos`; testes `prototype` verificam ausência de referências compartilhadas em papéis, competências, restrições e profissionais |
+| `FabricaProjeto` e fábricas de documentário, animação e publicidade | `src/domain/fabricas.ts`; cada fábrica cria projeto, validador, recomendador, notificador e relatório coerentes (animação: recomendador que prioriza modelagem 3D e relatório com métricas de renderização); testes `fabricas` |
+| `OrquestradorEquipe` recebe a fábrica no construtor, sem condicionais por tipo | Validador e recomendador obtidos da fábrica; teste estático garante ausência de literais de tipo e `switch` no orquestrador e no serviço |
+| `SistemaRecomendacao` identifica o tipo e seleciona a fábrica | `fabricaPara(tipo)`: protótipo registrado + Factory Method `criarFabrica()`; teste confirma a fábrica usada em cada solicitação |
+| Testes de integração alternando fábricas | `tests/fabricas.test.ts` (recomendações, validações, notificações e relatórios por tipo, inclusive uma fábrica nova de realidade virtual sem alterar o orquestrador) e `tests/postgres.test.ts` (persistência JSONB e reconstrução de cada tipo) |
+| Windows e Ubuntu 24.04 | Windows: build, migrações, seed, 78 testes, demonstrações e API real aprovados. Ubuntu: build e os 9 arquivos de teste aprovados no contêiner de validação |
+
+Cobertura com PostgreSQL real: instruções 99,31%, ramificações 95,19%, funções 99,39%, linhas 99,53%.
+
+Foi adicionado `.gitattributes` forçando LF em `*.sh` e `Dockerfile*`: com `core.autocrlf=true` no Windows, `scripts/validate-ubuntu.sh` era extraído com CRLF e a validação Ubuntu falhava antes de começar (`set: Illegal option -`).
+
+O teste de carga (10 mil profissionais, 100 requisições simultâneas, limite de 2 s) oscilou nesta máquina entre 1,24 s e 7,3 s de máximo, tanto na atividade 2 quanto no código original da atividade 1 executado nas mesmas condições; no contêiner Ubuntu o máximo foi 2,53 s. A medição isolada de CPU (100 criações com 10 mil profissionais em memória) foi equivalente nas duas versões (cerca de 22 ms por criação), portanto a variação decorre da carga do ambiente, não das fábricas.
