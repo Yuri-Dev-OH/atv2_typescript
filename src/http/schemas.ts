@@ -1,4 +1,4 @@
-import { PAPEIS } from '../domain/model.js';
+import { PAPEIS, TIPOS_PROJETO } from '../domain/model.js';
 
 const texto = { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' };
 const data = { type: 'string', format: 'date' };
@@ -21,13 +21,14 @@ export const profissionalSchema = objeto({
 const projetoProperties = {
   produtorId: texto, emailProdutor: email, titulo: texto, genero: texto,
   duracao: { type: 'number', exclusiveMinimum: 0, maximum: 10000 }, orcamento: decimal,
-  inicio: data, prazo: data, tipoCaptacao: { type: 'string', enum: ['documentario', 'ficcao', 'animacao'] },
+  inicio: data, prazo: data, tipoCaptacao: { type: 'string', enum: TIPOS_PROJETO },
   localizacao: texto,
   papeis: lista(objeto({ papel, peso: { type: 'number', exclusiveMinimum: 0, maximum: 100 }, competencias: lista(competencia, 1) }), 1, 6),
-  estrategia: { type: 'string', enum: ['cosseno', 'colaborativa', 'orcamento'], default: 'cosseno' },
-  parametros: { ...parametros, default: { pesoTecnico: 0.7, pesoHistorico: 0.3, notaMinima: 0 } },
+  // Sem padrão no schema: papéis, estratégia e parâmetros omitidos vêm do protótipo do tipo.
+  estrategia: { type: 'string', enum: ['cosseno', 'colaborativa', 'orcamento'] },
+  parametros,
 };
-export const projetoSchema = objeto(projetoProperties, ['produtorId', 'emailProdutor', 'titulo', 'genero', 'duracao', 'orcamento', 'inicio', 'prazo', 'tipoCaptacao', 'localizacao', 'papeis']);
+export const projetoSchema = objeto(projetoProperties, ['produtorId', 'emailProdutor', 'titulo', 'genero', 'duracao', 'orcamento', 'inicio', 'prazo', 'tipoCaptacao', 'localizacao']);
 const { produtorId: _produtor, emailProdutor: _email, estrategia: _estrategia, parametros: _parametros, ...alteraveis } = projetoProperties;
 export const reavaliacaoSchema = { ...objeto({ ...alteraveis,
   estrategia: { type: 'string', enum: ['cosseno', 'colaborativa', 'orcamento'] }, parametros }, []), minProperties: 1 };

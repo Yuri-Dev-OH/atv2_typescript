@@ -1,4 +1,6 @@
 import { centavos, type Profissional, type Projeto, type VisitanteProjeto } from './model.js';
+import type { RestricoesAnimacao } from './projetos.js';
+import { diasEntre, horasRender } from './validadores.js';
 import { mediaAvaliacoes } from '../recommendation/strategies.js';
 
 export class ValidadorConsistencia implements VisitanteProjeto<string[]> {
@@ -43,5 +45,17 @@ export class GeradorRelatorio implements VisitanteProjeto<string> {
   }
   visitarProfissional({ dados: p }: Profissional): string {
     return `${p.nome} | ${p.papeis.join(', ')} | R$ ${p.preco.toFixed(2)} | avaliação: ${(mediaAvaliacoes(p) * 5).toFixed(1)}`;
+  }
+}
+/** Relatório da fábrica de animação: acrescenta métricas de eficiência de renderização. */
+export class GeradorRelatorioAnimacao extends GeradorRelatorio {
+  constructor(private readonly restricoes: RestricoesAnimacao) { super(); }
+  override visitarProjeto(p: Projeto): string {
+    const { projeto } = p.estado;
+    const necessarias = horasRender(projeto.duracao, this.restricoes), janela = diasEntre(projeto.inicio, projeto.prazo) * 24;
+    return [super.visitarProjeto(p),
+      `Render estimado: ${necessarias} h (${this.restricoes.minutosRenderPorMinuto} min de máquina por minuto de obra; ${this.restricoes.softwares3D.join('/')})`,
+      `Ocupação da janela de render: ${(janela ? necessarias / janela * 100 : 100).toFixed(1)}% de ${janela} h`,
+      `Custo por minuto de obra: R$ ${(p.estado.equipe.custo / projeto.duracao).toFixed(2)}`].join('\n');
   }
 }

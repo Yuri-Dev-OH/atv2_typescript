@@ -31,7 +31,33 @@ function montarRanking(p: ProjetoDados, profissionais: ProfissionalDados[], scor
     .filter(prof => prof.papeis.includes(papel.papel))
     .map(prof => ({ profissionalId: prof.id, nome: prof.nome, preco: prof.preco, pontuacao: Math.max(0, Math.min(1, score(prof, papel.competencias))) }))
     .filter(c => c.pontuacao >= p.parametros.notaMinima)
-    .sort((a, b) => b.pontuacao - a.pontuacao || a.preco - b.preco || (a.profissionalId < b.profissionalId ? -1 : a.profissionalId > b.profissionalId ? 1 : 0))]));
+    .sort(compararCandidatos)]));
+}
+/** Maior pontuação primeiro; empates pelo menor preço e, por fim, pelo id. */
+export function compararCandidatos(a: Candidato, b: Candidato): number {
+  return b.pontuacao - a.pontuacao || a.preco - b.preco || (a.profissionalId < b.profissionalId ? -1 : a.profissionalId > b.profissionalId ? 1 : 0);
+}
+/**
+ * Decorador de estratégia usado pelas fábricas: combina a pontuação da estratégia
+ * escolhida com a afinidade às competências prioritárias do tipo de projeto.
+ */
+export class RecomendadorPriorizado implements RecomendacaoStrategy {
+  /**
+   * @param base Estratégia escolhida pelo produtor.
+   * @param prioridades Competências valorizadas pelo tipo (por exemplo, modelagem 3D).
+   * @param peso Fração da pontuação final dada à afinidade, entre 0 e 1.
+   */
+  constructor(private readonly base: RecomendacaoStrategy, private readonly prioridades: Competencia[], private readonly peso = 0.3) {}
+  recomendar(p: ProjetoDados, profissionais: ProfissionalDados[]): Map<Papel, Candidato[]> {
+    const ranking = this.base.recomendar(p, profissionais);
+    const competencias = new Map(profissionais.map(prof => [prof.id, prof.competencias]));
+    for (const [papel, candidatos] of ranking) {
+      ranking.set(papel, candidatos.map(c => ({ ...c,
+        pontuacao: (1 - this.peso) * c.pontuacao + this.peso * cosseno(this.prioridades, competencias.get(c.profissionalId) ?? []) }))
+        .sort(compararCandidatos));
+    }
+    return ranking;
+  }
 }
 export class SimilaridadeCosseno implements RecomendacaoStrategy {
   recomendar(p: ProjetoDados, profissionais: ProfissionalDados[]): Map<Papel, Candidato[]> {

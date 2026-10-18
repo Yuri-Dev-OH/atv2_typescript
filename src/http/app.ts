@@ -1,8 +1,8 @@
 import Fastify from 'fastify';
 import { SistemaRecomendacao } from '../application/service.js';
-import { ErroDominio, Profissional, Projeto, exigir, type Papel, type ProfissionalDados, type ProjetoDados } from '../domain/model.js';
+import { ErroDominio, Profissional, exigir, type NovoProjeto, type Papel, type ProfissionalDados } from '../domain/model.js';
 import type { PublicadorIntegracao, Repositorio, RepositorioProfissionais } from '../domain/ports.js';
-import { CalculadorCompatibilidade, GeradorRelatorio, ValidadorConsistencia } from '../domain/visitors.js';
+import { CalculadorCompatibilidade, ValidadorConsistencia } from '../domain/visitors.js';
 import { AuditoriaRecomendacao, EventosEmMemoria, IntegracaoEquipe, NotificadorEmail, NotificadorInterno, ObservadorComposicao, type EnviadorEmail } from '../events/observers.js';
 import * as schemas from './schemas.js';
 import { ControleConcorrencia } from './concurrency.js';
@@ -46,7 +46,7 @@ export function criarApp(repo: Repositorio, options: { logger?: boolean; email?:
     return reply.code(201).send(await gravacoes.executar(() => sistema.cadastrarProfissional(req.body)));
   });
   app.get('/profissionais', async () => (options.profissionais ?? repo).listarProfissionais());
-  app.post<{ Body: Omit<ProjetoDados, 'id'> }>('/projetos', { schema: { body: schemas.projetoSchema } }, async (req, reply) => {
+  app.post<{ Body: NovoProjeto }>('/projetos', { schema: { body: schemas.projetoSchema } }, async (req, reply) => {
     return reply.code(201).send(await gravacoes.executar(() => sistema.criar(req.body)));
   });
   app.get<{ Params: { id: string } }>('/projetos/:id', { schema: { params: schemas.projetoParams } }, async req => sistema.obter(req.params.id));
@@ -59,8 +59,9 @@ export function criarApp(repo: Repositorio, options: { logger?: boolean; email?:
   app.get<{ Params: { id: string } }>('/projetos/:id/relatorio', { schema: { params: schemas.projetoParams } }, async req => {
     const estado = await sistema.obter(req.params.id);
     const catalogo = await sistema.catalogo.obter();
-    const projeto = new Projeto(estado, catalogo.profissionais.filter(p => estado.equipe.membros.some(m => m.profissionalId === p.id)).map(p => new Profissional(p)));
-    return { texto: projeto.aceitar(new GeradorRelatorio()), compatibilidade: projeto.aceitar(new CalculadorCompatibilidade()), pendencias: projeto.aceitar(new ValidadorConsistencia()) };
+    const projeto = sistema.prototipos.hidratar(estado, catalogo.profissionais.filter(p => estado.equipe.membros.some(m => m.profissionalId === p.id)).map(p => new Profissional(p)));
+    const fabrica = projeto.criarFabrica();
+    return { tipo: projeto.tipo, restricoes: projeto.restricoes, texto: projeto.aceitar(fabrica.criarRelatorio()), compatibilidade: projeto.aceitar(new CalculadorCompatibilidade()), pendencias: [...projeto.aceitar(new ValidadorConsistencia()), ...fabrica.criarValidador().validar(estado.projeto)] };
   });
   app.get<{ Querystring: { destinatarioId?: string } }>('/notificacoes', { schema: { querystring: schemas.destinatarioQuery } }, async req => repo.notificacoes(req.query.destinatarioId));
   app.get<{ Querystring: { projetoId?: string } }>('/auditoria', { schema: { querystring: schemas.auditoriaQuery } }, async req => repo.auditoria(req.query.projetoId));

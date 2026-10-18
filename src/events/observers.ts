@@ -3,6 +3,8 @@ import type { EventoRecomendacao, Notificacao } from '../domain/model.js';
 import type { Logger, PublicadorIntegracao, Repositorio } from '../domain/ports.js';
 
 export interface Observador { nome: string; atualizar(evento: EventoRecomendacao): Promise<void> }
+// Eventos sem formatação do tipo de projeto (cadastros e registros antigos) usam o formato padrão.
+const mensagem = (evento: EventoRecomendacao) => evento.mensagem ?? `${evento.tipo}: projeto ${evento.projetoId}`;
 export interface EnviadorEmail { enviar(destino: string, assunto: string, texto: string): Promise<void> }
 export class AuditoriaRecomendacao implements Observador {
   readonly nome = 'auditoria';
@@ -18,7 +20,7 @@ export class NotificadorInterno implements Observador {
   async atualizar(evento: EventoRecomendacao): Promise<void> {
     for (const d of evento.destinatarios) await this.repo.salvarNotificacao({
       id: `${evento.id}:interno:${d.id}`, eventoId: evento.id, destinatarioId: d.id,
-      canal: 'interno', destino: d.id, mensagem: `${evento.tipo}: projeto ${evento.projetoId}`, status: 'registrada',
+      canal: 'interno', destino: d.id, mensagem: mensagem(evento), status: 'registrada',
     });
   }
 }
@@ -28,11 +30,11 @@ export class NotificadorEmail implements Observador {
   async atualizar(evento: EventoRecomendacao): Promise<void> {
     for (const d of evento.destinatarios) {
       const n: Notificacao = { id: `${evento.id}:email:${d.id}`, eventoId: evento.id, destinatarioId: d.id,
-        canal: 'email', destino: d.email, mensagem: `${evento.tipo}: projeto ${evento.projetoId}`, status: 'registrada' };
+        canal: 'email', destino: d.email, mensagem: mensagem(evento), status: 'registrada' };
       if (this.enviador) {
         const existente = (await this.repo.notificacoes(d.id)).find(x => x.id === n.id);
         if (existente?.status === 'enviada') continue;
-        await this.enviador.enviar(d.email, 'Cinebridge', n.mensagem);
+        await this.enviador.enviar(d.email, evento.assunto ?? 'Cinebridge', n.mensagem);
         n.status = 'enviada';
       }
       await this.repo.salvarNotificacao(n);

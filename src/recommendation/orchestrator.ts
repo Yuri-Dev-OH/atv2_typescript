@@ -1,15 +1,19 @@
 import { centavos, exigir, validarProjeto, type Candidato, type MembroEquipe, type Papel, type ProfissionalDados, type ProjetoDados } from '../domain/model.js';
-import type { RecomendacaoStrategy } from './strategies.js';
+import type { FabricaProjeto } from '../domain/fabricas.js';
 
 export interface Composicao { membros: MembroEquipe[]; ranking: Map<Papel, Candidato[]>; faltantes: Papel[] }
 export abstract class OrquestradorEquipe {
   // Propriedade não gravável: as subclasses implementam apenas as etapas do fluxo.
-  readonly orquestrar: (p: ProjetoDados, profissionais: ProfissionalDados[], estrategia: RecomendacaoStrategy, fixos?: MembroEquipe[], excluidos?: Partial<Record<Papel, string[]>>) => Composicao;
-  constructor() {
-    this.orquestrar = (p, profissionais, estrategia, fixos = [], excluidos = {}) => {
+  readonly orquestrar: (p: ProjetoDados, profissionais: ProfissionalDados[], fixos?: MembroEquipe[], excluidos?: Partial<Record<Papel, string[]>>) => Composicao;
+  /**
+   * @param fabrica Fábrica do tipo de projeto. Fornece o validador e o recomendador,
+   *     de modo que um novo tipo não exige alterações no orquestrador.
+   */
+  constructor(protected readonly fabrica: FabricaProjeto) {
+    this.orquestrar = (p, profissionais, fixos = [], excluidos = {}) => {
       this.validarRestricoes(p, fixos);
       const normalizados = this.normalizarDados(p, profissionais);
-      const ranking = estrategia.recomendar(p, normalizados);
+      const ranking = this.fabrica.criarRecomendador(p.estrategia).recomendar(p, normalizados);
       for (const [papel, candidatos] of ranking) ranking.set(papel, candidatos.filter(c => !excluidos[papel]?.includes(c.profissionalId)));
       return this.posProcessar(p, ranking, fixos);
     };
@@ -22,6 +26,8 @@ export abstract class OrquestradorEquipe {
 export class OrquestradorPadrao extends OrquestradorEquipe {
   protected validarRestricoes(p: ProjetoDados, fixos: MembroEquipe[]): void {
     validarProjeto(p);
+    const violacoes = this.fabrica.criarValidador().validar(p);
+    exigir(!violacoes.length, violacoes.join(' '));
     exigir(fixos.reduce((s, m) => s + centavos(m.preco), 0) <= centavos(p.orcamento), 'Os membros fixos excedem o orçamento.');
   }
   protected normalizarDados(p: ProjetoDados, profissionais: ProfissionalDados[]): ProfissionalDados[] {

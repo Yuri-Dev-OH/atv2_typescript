@@ -1,13 +1,32 @@
-import { agora, centavos, exigir, id, validarProfissional, validarProjeto, type Convite, type Destinatario, type EstadoProjeto, type EventoRecomendacao, type MembroEquipe, type Papel, type ProfissionalDados, type ProjetoDados } from '../domain/model.js';
+import { agora, centavos, exigir, id, validarProfissional, validarProjeto, type Convite, type Destinatario, type EstadoProjeto, type EventoRecomendacao, type MembroEquipe, type NovoProjeto, type Papel, type ProfissionalDados, type ProjetoDados, type TipoProjeto } from '../domain/model.js';
+import type { FabricaProjeto } from '../domain/fabricas.js';
+import { RegistroPrototipos } from '../domain/prototipos.js';
 import type { ProcessadorEventos, Repositorio, RepositorioProfissionais } from '../domain/ports.js';
 import { OrquestradorPadrao, type OrquestradorEquipe } from '../recommendation/orchestrator.js';
-import { estrategias } from '../recommendation/strategies.js';
 import { CatalogoProfissionais } from './catalog.js';
 
 export class SistemaRecomendacao {
   readonly catalogo: CatalogoProfissionais;
-  constructor(private readonly repo: Repositorio, private readonly eventos: ProcessadorEventos, private readonly orquestrador: OrquestradorEquipe = new OrquestradorPadrao(), private readonly profissionais: RepositorioProfissionais = repo) {
+  /**
+   * @param criarOrquestrador Monta o orquestrador com a fábrica do tipo de cada solicitação.
+   * @param prototipos Protótipos de projeto; cada um fornece sua fábrica (Factory Method).
+   */
+  constructor(private readonly repo: Repositorio, private readonly eventos: ProcessadorEventos,
+    private readonly criarOrquestrador: (fabrica: FabricaProjeto) => OrquestradorEquipe = fabrica => new OrquestradorPadrao(fabrica),
+    private readonly profissionais: RepositorioProfissionais = repo, readonly prototipos: RegistroPrototipos = RegistroPrototipos.padrao()) {
     this.catalogo = new CatalogoProfissionais(profissionais);
+  }
+  /**
+   * Seleciona a fábrica do tipo de projeto, sem condicionais: o protótipo registrado
+   * para o tipo cria a fábrica concreta da sua família.
+   *
+   * @throws ErroDominio Quando o tipo não tem protótipo registrado.
+   */
+  fabricaPara(tipo: TipoProjeto): FabricaProjeto {
+    return this.prototipos.obter(tipo).criarFabrica();
+  }
+  private orquestradorPara(projeto: ProjetoDados): OrquestradorEquipe {
+    return this.criarOrquestrador(this.fabricaPara(projeto.tipoCaptacao));
   }
   private evento(tipo: string, projetoId: string, origem: string, dados: Record<string, unknown>, destinatarios: Destinatario[] = []): EventoRecomendacao {
     return { id: id(), tipo, projetoId, origem, dados, destinatarios: [...new Map(destinatarios.map(d => [d.id, d])).values()], data: agora(), entregues: [] };
@@ -27,14 +46,10 @@ export class SistemaRecomendacao {
     exigir(estado, 'Projeto não encontrado.', 404);
     return estado;
   }
-  async criar(dados: Omit<ProjetoDados, 'id'>): Promise<EstadoProjeto> {
-    const projeto = { ...dados, id: id() };
-    validarProjeto(projeto);
-    const estado: EstadoProjeto = {
-      projeto, equipe: { id: id(), membros: [], custo: 0, status: 'parcial' },
-      recomendacao: { id: id(), criadaEm: agora(), estrategia: projeto.estrategia, ranking: {}, faltantes: [], avisos: [], degradada: false },
-      convites: [], excluidos: {}, versao: 0,
-    };
+  async criar(dados: NovoProjeto): Promise<EstadoProjeto> {
+    // O protótipo do tipo fornece papéis, estratégia e parâmetros não informados.
+    const { estado } = this.fabricaPara(dados.tipoCaptacao).criarProjeto(dados);
+    validarProjeto(estado.projeto);
     const eventos = await this.recomendar(estado, []);
     return this.salvar(estado, eventos);
   }
@@ -75,7 +90,7 @@ export class SistemaRecomendacao {
       exigir(!degradada, 'Não foi possível validar o substituto no catálogo.', 503);
       const candidato = profissionais.find(p => p.id === profissionalId);
       exigir(candidato, 'Profissional não encontrado.', 404);
-      const { membros } = this.orquestrador.orquestrar(estado.projeto, [candidato], estrategias[estado.projeto.estrategia], fixos, estado.excluidos);
+      const { membros } = this.orquestradorPara(estado.projeto).orquestrar(estado.projeto, [candidato], fixos, estado.excluidos);
       const substituto = membros.find(m => m.papel === papel && m.profissionalId === profissionalId);
       exigir(substituto, 'O substituto não atende ao papel, disponibilidade, localização, nota ou orçamento.');
       fixos.push(substituto);
@@ -91,7 +106,7 @@ export class SistemaRecomendacao {
     const membro = estado.equipe.membros.find(m => m.papel === convite.papel && m.profissionalId === convite.profissionalId);
     exigir(membro, 'O profissional não pertence mais à equipe.', 409);
     convite.status = aceitar ? 'aceito' : 'recusado';
-    await this.salvar(estado, [this.evento(aceitar ? 'CONVITE_ACEITO' : 'CONVITE_RECUSADO', projetoId, convite.profissionalId, { conviteId, papel: convite.papel }, [this.produtor(estado)])]);
+    await this.salvar(estado, [this.formatar(estado, this.evento(aceitar ? 'CONVITE_ACEITO' : 'CONVITE_RECUSADO', projetoId, convite.profissionalId, { conviteId, papel: convite.papel }, [this.produtor(estado)]))]);
     await this.eventos.processar();
     return this.obter(projetoId);
   }
@@ -123,12 +138,16 @@ export class SistemaRecomendacao {
   private async notificar(estado: EstadoProjeto, tipo: string, membros: Pick<MembroEquipe, 'profissionalId'>[], dados: Record<string, unknown>): Promise<EventoRecomendacao> {
     const { profissionais } = await this.catalogo.obter();
     const envolvidos = new Set(membros.map(m => m.profissionalId));
-    return this.evento(tipo, estado.projeto.id, estado.projeto.produtorId, dados,
-      [this.produtor(estado), ...profissionais.filter(p => envolvidos.has(p.id)).map(p => ({ id: p.id, email: p.email }))]);
+    return this.formatar(estado, this.evento(tipo, estado.projeto.id, estado.projeto.produtorId, dados,
+      [this.produtor(estado), ...profissionais.filter(p => envolvidos.has(p.id)).map(p => ({ id: p.id, email: p.email }))]));
+  }
+  /** Anexa ao evento o assunto e a mensagem no formato do notificador do tipo de projeto. */
+  private formatar(estado: EstadoProjeto, evento: EventoRecomendacao): EventoRecomendacao {
+    return { ...evento, ...this.fabricaPara(estado.projeto.tipoCaptacao).criarNotificador().compor(evento.tipo, estado.projeto) };
   }
   private async recomendar(estado: EstadoProjeto, fixos: MembroEquipe[]): Promise<EventoRecomendacao[]> {
     const { profissionais, degradada } = await this.catalogo.obter();
-    const resultado = this.orquestrador.orquestrar(estado.projeto, profissionais, estrategias[estado.projeto.estrategia], fixos, estado.excluidos);
+    const resultado = this.orquestradorPara(estado.projeto).orquestrar(estado.projeto, profissionais, fixos, estado.excluidos);
     estado.equipe = { id: estado.equipe.id, membros: resultado.membros, custo: 0, status: 'sugerida' };
     estado.recomendacao = {
       id: id(), criadaEm: agora(), estrategia: estado.projeto.estrategia,

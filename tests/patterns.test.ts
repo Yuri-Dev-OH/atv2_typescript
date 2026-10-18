@@ -1,18 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { id, Profissional, Projeto, validarCompetencias, validarData, validarProfissional, validarProjeto, type Candidato, type EstadoProjeto, type Papel, type ProfissionalDados, type ProjetoDados } from '../src/domain/model.js';
+import { id, Profissional, validarCompetencias, validarData, validarProfissional, validarProjeto, type Candidato, type EstadoProjeto, type Papel, type ProfissionalDados, type ProjetoDados } from '../src/domain/model.js';
+import { ProjetoFiccao } from '../src/domain/projetos.js';
 import { CalculadorCompatibilidade, GeradorRelatorio, ValidadorConsistencia } from '../src/domain/visitors.js';
 import { OrquestradorEquipe, OrquestradorPadrao, type Composicao } from '../src/recommendation/orchestrator.js';
-import { cosseno, estrategias, mediaAvaliacoes } from '../src/recommendation/strategies.js';
+import { cosseno, estrategias, mediaAvaliacoes, type RecomendacaoStrategy } from '../src/recommendation/strategies.js';
+import { RegistroPrototipos } from '../src/domain/prototipos.js';
 import { profissionaisExemplo, projetoExemplo } from '../scripts/fixtures.js';
 
 const projeto = (): ProjetoDados => ({ ...projetoExemplo(), id: id() });
 const profissionais = (): ProfissionalDados[] => profissionaisExemplo().map(p => ({ ...p, id: id() }));
+const ficcao = () => RegistroPrototipos.padrao().obter('ficcao').criarFabrica();
+// Com `estrategia`, a fábrica de ficção passa a fornecer esse recomendador ao orquestrador.
+const orquestrador = (estrategia?: RecomendacaoStrategy) => {
+  const fabrica = ficcao();
+  if (estrategia) fabrica.criarRecomendador = () => estrategia;
+  return new OrquestradorPadrao(fabrica);
+};
 describe('Strategy', () => {
   it('trocar a estratégia muda a equipe e o custo', () => {
-    const p = projeto(), lista = profissionais(), o = new OrquestradorPadrao();
-    const tecnico = o.orquestrar(p, lista, estrategias.cosseno);
-    const colaborativo = o.orquestrar(p, lista, estrategias.colaborativa);
-    const economico = o.orquestrar(p, lista, estrategias.orcamento);
+    const p = projeto(), lista = profissionais(), o = orquestrador();
+    const tecnico = o.orquestrar({ ...p, estrategia: 'cosseno' }, lista);
+    const colaborativo = o.orquestrar({ ...p, estrategia: 'colaborativa' }, lista);
+    const economico = o.orquestrar({ ...p, estrategia: 'orcamento' }, lista);
     expect(tecnico.membros).toHaveLength(6);
     expect(tecnico.membros.every(m => m.preco === 1200)).toBe(true);
     expect(colaborativo.membros.every(m => m.preco === 400)).toBe(true);
@@ -44,7 +53,7 @@ describe('Strategy', () => {
   it('orçamento zero só admite profissionais gratuitos', () => {
     const p = projeto(); p.orcamento = 0;
     const lista = profissionais(); lista[0]!.preco = 0;
-    expect(new OrquestradorPadrao().orquestrar(p, lista, estrategias.orcamento).membros).toHaveLength(1);
+    expect(orquestrador().orquestrar({ ...p, estrategia: 'orcamento' }, lista).membros).toHaveLength(1);
   });
 });
 describe('Template Method', () => {
@@ -56,15 +65,15 @@ describe('Template Method', () => {
       [p.papeis[1]!.papel, [candidato('c', 1), candidato('d', 0.7)]],
     ]);
     const estrategia = { recomendar: () => ranking };
-    const o = new OrquestradorPadrao();
-    expect(o.orquestrar(p, [], estrategia).membros.map(m => m.profissionalId)).toEqual(['a', 'c']);
+    const o = orquestrador(estrategia);
+    expect(o.orquestrar(p, []).membros.map(m => m.profissionalId)).toEqual(['a', 'c']);
     ranking.set(p.papeis[1]!.papel, [candidato('a', 1), candidato('d', 0.7)]);
-    const resultado = o.orquestrar(p, [], estrategia);
+    const resultado = o.orquestrar(p, []);
     expect(new Set(resultado.membros.map(m => m.profissionalId)).size).toBe(2);
     expect(resultado.membros.reduce((s, m) => s + m.pontuacao, 0)).toBeCloseTo(1.8);
     ranking.set(p.papeis[0]!.papel, [candidato('a', 1, 150), candidato('b', 0.8)]);
     ranking.set(p.papeis[1]!.papel, [candidato('c', 1, 150), candidato('d', 0.7)]);
-    expect(o.orquestrar(p, [], estrategia).membros.reduce((s, m) => s + m.preco, 0)).toBeLessThanOrEqual(200);
+    expect(o.orquestrar(p, []).membros.reduce((s, m) => s + m.preco, 0)).toBeLessThanOrEqual(200);
   });
   it('executa as etapas em ordem e impede substituição do método principal', () => {
     const chamadas: string[] = [];
@@ -73,34 +82,36 @@ describe('Template Method', () => {
       protected normalizarDados(_p: ProjetoDados, lista: ProfissionalDados[]): ProfissionalDados[] { chamadas.push('normalizar'); return lista; }
       protected posProcessar(_p: ProjetoDados, ranking: Map<Papel, Candidato[]>): Composicao { chamadas.push('posProcessar'); return { ranking, membros: [], faltantes: [] }; }
     }
-    const o = new Instrumentado();
-    o.orquestrar(projeto(), [], { recomendar: () => { chamadas.push('recomendar'); return new Map(); } });
+    const fabrica = ficcao();
+    fabrica.criarRecomendador = () => ({ recomendar: () => { chamadas.push('recomendar'); return new Map(); } });
+    const o = new Instrumentado(fabrica);
+    o.orquestrar(projeto(), []);
     expect(chamadas).toEqual(['validar', 'normalizar', 'recomendar', 'posProcessar']);
     expect(() => Object.defineProperty(o, 'orquestrar', { value: () => undefined })).toThrow();
   });
   it('respeita orçamento, disponibilidade, local e exclusões', () => {
     const p = projeto(), lista = profissionais(); p.orcamento = 2400;
-    const resultado = new OrquestradorPadrao().orquestrar(p, lista, estrategias.cosseno);
+    const resultado = orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, lista);
     expect(resultado.membros.reduce((s, m) => s + m.preco, 0)).toBeLessThanOrEqual(2400);
     expect(resultado.faltantes).toEqual([]);
     lista.forEach(x => { x.disponibilidade.fim = '2026-01-01'; });
-    expect(new OrquestradorPadrao().orquestrar(p, lista, estrategias.cosseno).faltantes).toHaveLength(6);
+    expect(orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, lista).faltantes).toHaveLength(6);
     const remoto = profissionais()[0]!; remoto.remoto = true; remoto.localizacao = 'Recife';
-    expect(new OrquestradorPadrao().orquestrar(p, [remoto], estrategias.cosseno).membros).toHaveLength(1);
+    expect(orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, [remoto]).membros).toHaveLength(1);
     remoto.remoto = false;
-    expect(new OrquestradorPadrao().orquestrar(p, [remoto], estrategias.cosseno).membros).toHaveLength(0);
+    expect(orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, [remoto]).membros).toHaveLength(0);
     remoto.remoto = true;
-    expect(new OrquestradorPadrao().orquestrar(p, [remoto], estrategias.cosseno, [], { DIRETOR: [remoto.id] }).membros).toHaveLength(0);
+    expect(orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, [remoto], [], { DIRETOR: [remoto.id] }).membros).toHaveLength(0);
   });
   it('não repete profissional e não troca membros fixos', () => {
     const p = projeto(), lista = profissionais();
     lista[0]!.papeis = ['DIRETOR', 'EDITOR'];
-    const o = new OrquestradorPadrao(), original = o.orquestrar(p, lista, estrategias.cosseno);
+    const o = orquestrador(), original = o.orquestrar({ ...p, estrategia: 'cosseno' }, lista);
     const fixos = original.membros.filter(m => m.papel !== 'EDITOR');
-    const atualizado = o.orquestrar(p, lista, estrategias.orcamento, fixos);
+    const atualizado = o.orquestrar({ ...p, estrategia: 'orcamento' }, lista, fixos);
     expect(new Set(atualizado.membros.map(m => m.profissionalId)).size).toBe(atualizado.membros.length);
     for (const fixo of fixos) expect(atualizado.membros).toContainEqual(fixo);
-    expect(() => o.orquestrar({ ...p, orcamento: 0 }, lista, estrategias.cosseno, fixos)).toThrow('fixos');
+    expect(() => o.orquestrar({ ...p, orcamento: 0, estrategia: 'cosseno' }, lista, fixos)).toThrow('fixos');
   });
   it('encontra equipe viável em casos comparados com busca exaustiva', () => {
     let seed = 12345;
@@ -112,17 +123,17 @@ describe('Template Method', () => {
         if (indice === p.papeis.length) return custo <= p.orcamento;
         return lista.some(prof => !usados.has(prof.id) && prof.papeis.includes(p.papeis[indice]!.papel) && viavel(indice + 1, new Set([...usados, prof.id]), custo + prof.preco));
       }
-      const resultado = new OrquestradorPadrao().orquestrar(p, lista, estrategias.orcamento);
+      const resultado = orquestrador().orquestrar({ ...p, estrategia: 'orcamento' }, lista);
       expect(resultado.faltantes.length === 0).toBe(viavel(0, new Set(), 0));
     }
   });
 });
 describe('Visitor e validações do domínio', () => {
   it('opera sobre o mesmo projeto sem modificar seu estado', () => {
-    const p = projeto(), resultado = new OrquestradorPadrao().orquestrar(p, profissionais(), estrategias.cosseno);
+    const p = projeto(), resultado = orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, profissionais());
     const estado: EstadoProjeto = { projeto: p, equipe: { id: id(), membros: resultado.membros, status: 'sugerida', custo: 7200 },
       recomendacao: { id: id(), criadaEm: '', estrategia: 'cosseno', ranking: {}, faltantes: [], avisos: [], degradada: false }, convites: [], excluidos: {}, versao: 1 };
-    const entidade = new Projeto(estado), antes = structuredClone(estado);
+    const entidade = new ProjetoFiccao(estado), antes = structuredClone(estado);
     expect(entidade.aceitar(new ValidadorConsistencia())).toEqual(['Há membros sem confirmação de ambas as partes.']);
     expect(entidade.aceitar(new CalculadorCompatibilidade())).toBeGreaterThan(0);
     expect(entidade.aceitar(new GeradorRelatorio())).toContain('Curta independente');
@@ -159,10 +170,10 @@ describe('Visitor e validações do domínio', () => {
     expect(() => validarProjeto(proj)).toThrow('peso');
   });
   it('percorre os profissionais ligados ao projeto', () => {
-    const p = projeto(), lista = profissionais(), resultado = new OrquestradorPadrao().orquestrar(p, lista, estrategias.cosseno);
+    const p = projeto(), lista = profissionais(), resultado = orquestrador().orquestrar({ ...p, estrategia: 'cosseno' }, lista);
     const estado: EstadoProjeto = { projeto: p, equipe: { id: id(), membros: resultado.membros, status: 'sugerida', custo: 7200 }, recomendacao: { id: id(), criadaEm: '', estrategia: 'cosseno', ranking: {}, faltantes: [], avisos: [], degradada: false }, convites: [], excluidos: {}, versao: 1 };
     const prof = new Profissional(lista[0]!); prof.dados.disponibilidade.fim = '2020-01-01';
-    const entidade = new Projeto(estado, [prof]);
+    const entidade = new ProjetoFiccao(estado, [prof]);
     expect(entidade.aceitar(new ValidadorConsistencia()).length).toBeGreaterThan(2);
     expect(entidade.aceitar(new GeradorRelatorio())).toContain('avaliação');
     expect(entidade.aceitar(new CalculadorCompatibilidade())).toBeGreaterThan(0);

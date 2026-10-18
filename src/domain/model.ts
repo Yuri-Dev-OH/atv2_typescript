@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import type { FabricaProjeto } from './fabricas.js';
 
 export const PAPEIS = ['DIRETOR', 'DIRETOR_FOTOGRAFIA', 'SONOPLASTA', 'EDITOR', 'ROTEIRISTA', 'EFEITOS_VISUAIS'] as const;
 export type Papel = typeof PAPEIS[number];
+export const TIPOS_PROJETO = ['documentario', 'ficcao', 'animacao', 'publicitario'] as const;
+export type TipoProjeto = typeof TIPOS_PROJETO[number];
 export type Estrategia = 'cosseno' | 'colaborativa' | 'orcamento';
 export interface Competencia { nome: string; nivel: number }
 export interface Avaliacao { produtorId: string; nota: number; comentario: string; data: string }
@@ -32,11 +35,22 @@ export interface ProjetoDados {
   orcamento: number;
   inicio: string;
   prazo: string;
-  tipoCaptacao: 'documentario' | 'ficcao' | 'animacao';
+  tipoCaptacao: TipoProjeto;
   localizacao: string;
   papeis: PapelExigido[];
   estrategia: Estrategia;
   parametros: Parametros;
+}
+/** Dados de entrada de um novo projeto; o protótipo do tipo completa os campos opcionais. */
+export type NovoProjeto = Omit<ProjetoDados, 'id' | 'papeis' | 'estrategia' | 'parametros'>
+  & Partial<Pick<ProjetoDados, 'papeis' | 'estrategia' | 'parametros'>>;
+/** Ajustes finos aplicados sobre um clone; o tipo do projeto é definido pela subclasse. */
+export type AjustesProjeto = Partial<Omit<ProjetoDados, 'id' | 'tipoCaptacao'>>;
+/** Restrições comuns a todos os tipos de projeto; cada subclasse acrescenta as suas. */
+export interface RestricoesProjeto {
+  papeisObrigatorios: Papel[];
+  competenciasPrioritarias: Competencia[];
+  duracaoMaxima?: number;
 }
 export interface Candidato { profissionalId: string; nome: string; preco: number; pontuacao: number }
 export interface MembroEquipe extends Candidato { papel: Papel; confirmado: boolean; aceitoProdutor: boolean }
@@ -81,6 +95,9 @@ export interface EventoRecomendacao {
   dados: Record<string, unknown>;
   destinatarios: Destinatario[];
   entregues: string[];
+  /** Assunto e corpo no formato do tipo de projeto; ausentes em eventos sem projeto. */
+  assunto?: string;
+  mensagem?: string;
 }
 export interface Notificacao {
   id: string;
@@ -95,13 +112,97 @@ export interface VisitanteProjeto<T> {
   visitarProjeto(projeto: Projeto): T;
   visitarProfissional(profissional: Profissional): T;
 }
-export class Projeto {
-  constructor(readonly estado: EstadoProjeto, readonly profissionais: Profissional[] = []) {}
-  aceitar<T>(visitante: VisitanteProjeto<T>): T { return visitante.visitarProjeto(this); }
+/** Contrato do padrão Prototype. */
+export interface Prototipo<T> {
+  /** Retorna uma cópia profunda, sem referências compartilhadas com o original. */
+  clonar(): T;
 }
-export class Profissional {
+/**
+ * Raiz da hierarquia de projetos (Prototype) e elemento do Visitor.
+ *
+ * O estado continua sendo um objeto de dados puro, pois é serializado em JSONB e
+ * copiado com structuredClone pelos repositórios; a instância rica é montada sob
+ * demanda pelo RegistroPrototipos a partir de `tipoCaptacao`.
+ */
+export abstract class Projeto<R extends RestricoesProjeto = RestricoesProjeto> implements Prototipo<Projeto<R>> {
+  abstract readonly tipo: TipoProjeto;
+  private estadoAtual: EstadoProjeto;
+  private profissionaisAtuais: Profissional[];
+  protected constructor(estado: EstadoProjeto, profissionais: Profissional[], readonly restricoes: R) {
+    this.estadoAtual = estado;
+    this.profissionaisAtuais = profissionais;
+  }
+  get estado(): EstadoProjeto { return this.estadoAtual; }
+  get profissionais(): Profissional[] { return this.profissionaisAtuais; }
+  aceitar<T>(visitante: VisitanteProjeto<T>): T { return visitante.visitarProjeto(this); }
+  /** Cada subclasse devolve uma cópia profunda do próprio tipo. */
+  abstract clonar(): Projeto<R>;
+  /**
+   * Aplica ajustes finos sobre esta instância. Use somente em clones, nunca no protótipo registrado.
+   *
+   * @param ajustes Campos do projeto a sobrescrever; valores indefinidos são ignorados.
+   * @param restricoes Restrições específicas a sobrescrever.
+   * @returns A própria instância, para encadeamento.
+   */
+  ajustar(ajustes: AjustesProjeto, restricoes: Partial<R> = {}): this {
+    const projeto = this.estadoAtual.projeto;
+    // Ajustes são copiados para que o clone não compartilhe referências com quem os enviou.
+    this.estadoAtual.projeto = { ...projeto, ...structuredClone(definidos(ajustes)), id: projeto.id, tipoCaptacao: this.tipo };
+    Object.assign(this.restricoes, structuredClone(definidos(restricoes)));
+    return this;
+  }
+  /**
+   * Retorna um clone deste projeto vinculado a outro estado, sem copiá-lo.
+   *
+   * @param estado Estado que passa a pertencer ao clone (por referência).
+   * @param profissionais Profissionais visitados junto com o projeto.
+   * @returns Instância do mesmo tipo concreto, com restrições próprias.
+   */
+  comEstado(estado: EstadoProjeto, profissionais: Profissional[] = []): Projeto<R> {
+    const copia = this.clonar();
+    copia.estadoAtual = estado;
+    copia.profissionaisAtuais = profissionais;
+    return copia;
+  }
+  /**
+   * Cria um novo projeto usando este como protótipo.
+   *
+   * @param ajustes Dados que sobrescrevem os valores do protótipo.
+   * @returns Clone ajustado, com identidade própria, sem equipe e na versão 0.
+   */
+  instanciar(ajustes: AjustesProjeto): Projeto<R> {
+    const modelo = this.clonar().ajustar(ajustes);
+    return modelo.comEstado(estadoInicial({ ...modelo.estado.projeto, id: id() }));
+  }
+  /**
+   * Factory Method: cada tipo de projeto define a fábrica concreta da sua família
+   * de objetos (projeto, validador, recomendador e notificador).
+   */
+  abstract criarFabrica(): FabricaProjeto;
+  /** Agregados copiados em profundidade, na ordem dos construtores das subclasses. */
+  protected copiarAgregados(): [EstadoProjeto, Profissional[], R] {
+    return [structuredClone(this.estadoAtual), this.profissionaisAtuais.map(p => p.clonar()), structuredClone(this.restricoes)];
+  }
+}
+export class Profissional implements Prototipo<Profissional> {
   constructor(readonly dados: ProfissionalDados) {}
   aceitar<T>(visitante: VisitanteProjeto<T>): T { return visitante.visitarProfissional(this); }
+  clonar(): Profissional { return new Profissional(structuredClone(this.dados)); }
+}
+/**
+ * Estado de um projeto recém-criado, ainda sem equipe nem convites.
+ *
+ * @param projeto Dados completos do projeto.
+ */
+export function estadoInicial(projeto: ProjetoDados): EstadoProjeto {
+  return {
+    projeto, equipe: { id: id(), membros: [], custo: 0, status: 'parcial' },
+    recomendacao: { id: id(), criadaEm: agora(), estrategia: projeto.estrategia, ranking: {}, faltantes: [], avisos: [], degradada: false },
+    convites: [], excluidos: {}, versao: 0,
+  };
+}
+function definidos<T extends object>(valores: T): Partial<T> {
+  return Object.fromEntries(Object.entries(valores).filter(([, valor]) => valor !== undefined)) as Partial<T>;
 }
 export class ErroDominio extends Error {
   constructor(message: string, readonly statusCode = 422) { super(message); }
